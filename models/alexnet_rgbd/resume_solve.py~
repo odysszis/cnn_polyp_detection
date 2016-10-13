@@ -1,0 +1,18 @@
+import caffe
+import surgery, score
+import numpy as np
+import os
+import sys 
+import setproctitle
+setproctitle.setproctitle(os.path.basename(os.getcwd()))
+
+# set gpu mode
+caffe.set_mode_gpu()
+caffe.set_device(0);
+
+# Initialize SGD solver and restore the snapshot state
+solver = caffe.SGDSolver('solver.prototxt')
+solver.restore('snapshot/train_iter_80000.solverstate')
+
+
+solver.solve()

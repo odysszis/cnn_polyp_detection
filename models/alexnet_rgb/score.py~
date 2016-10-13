@@ -1,0 +1,197 @@
+from __future__ import division
+import matplotlib
+# Force matplotlib to not use any Xwindows backend.
+matplotlib.use('Agg')
+import caffe
+import numpy as np
+import os
+import sys
+from datetime import datetime
+from PIL import Image
+from skimage import io	
+from scipy import ndimage
+import matplotlib.pyplot as plt
+import sys
+
+from mpl_toolkits.axes_grid1 import host_subplot
+
+def fast_hist(a, b, n):
+    k = (a >= 0) & (a < n)
+    return np.bincount(n * a[k].astype(int) + b[k], minlength=n**2).reshape(n, n)
+
+def compute_hist(net, save_dir, dataset, layer='score', gt='label'):
+    n_cl = net.blobs[layer].channels
+    if save_dir:
+        os.mkdir(save_dir)
+    hist = np.zeros((n_cl, n_cl))
+    loss = 0
+    for idx in dataset:
+        net.forward()
+        hist += fast_hist(net.blobs[gt].data[0, 0].flatten(),
+                                net.blobs[layer].data[0].argmax(0).flatten(),
+                                n_cl)
+
+        if save_dir:
+            im = Image.fromarray(net.blobs[layer].data[0].argmax(0).astype(np.uint8), mode='P')
+            im.save(os.path.join(save_dir, idx + '.png'))
+        # compute the loss as well
+        loss += net.blobs['loss'].data.flat[0]
+    return hist, loss / len(dataset)
+
+def seg_tests(solver, save_format, dataset, layer='score', gt='label'):
+    print '>>>', datetime.now(), 'Begin seg tests'
+    solver.test_nets[0].share_with(solver.net)
+    do_seg_tests(solver.test_nets[0], solver.iter, save_format, dataset, layer, gt)
+
+def do_seg_tests(net, iter, save_format, dataset, layer='score', gt='label'):
+    n_cl = net.blobs[layer].channels
+    if save_format:
+        save_format = save_format.format(iter)
+    hist, loss = compute_hist(net, save_format, dataset, layer, gt)
+    # mean loss
+    print '>>>', datetime.now(), 'Iteration', iter, 'loss', loss
+    # overall accuracy
+    acc = np.diag(hist).sum() / hist.sum()
+    print '>>>', datetime.now(), 'Iteration', iter, 'overall accuracy', acc
+    # per-class accuracy
+    acc = np.diag(hist) / hist.sum(1)
+    print '>>>', datetime.now(), 'Iteration', iter, 'mean accuracy', np.nanmean(acc)
+    # per-class IU
+    iu = np.diag(hist) / (hist.sum(1) + hist.sum(0) - np.diag(hist))
+    print '>>>', datetime.now(), 'Iteration', iter, 'mean IU', np.nanmean(iu)
+    freq = hist.sum(1) / hist.sum()
+    print '>>>', datetime.now(), 'Iteration', iter, 'fwavacc', \
+            (freq[freq > 0] * iu[freq > 0]).sum()
+    return hist
+
+
+# ---------------------------------------------- CODE FROM PATRICK --------------------------------------------------
+
+
+def read_val_file(filePath,datasetPath):
+	with open(filePath) as f:
+    		lines = f.read().splitlines()
+	for i in xrange(0,len(lines)):
+		lines[i]=datasetPath+"/"+lines[i].split()[0]
+	return lines
+
+
+def open_images(imagePath,labelPath):
+	im = io.imread(imagePath)
+	plt.figure(5)
+	plt.imshow(im)
+	plt.savefig('5.png')
+	im = Image.fromarray(im)
+	image=im.resize((500, 500))
+	in_ = np.array(image, dtype=np.float32)
+	in_ = in_[:,:,::-1]
+	in_ -= np.array((104.00699,116.66877,122.67892))
+	in_ = in_.transpose((2,0,1))
+
+	im = io.imread(labelPath)
+	im = Image.fromarray(im)
+	im=im.resize((500, 500), Image.NEAREST)
+	im=im.convert('L') #makes it greyscale
+	im=np.array(im, dtype=(np.int32))
+	label=im
+	label[label>0]=1
+	label=np.array(label,np.uint8)
+	return in_, label
+
+def infer_one_image(net,in_):
+	net.blobs["data"].reshape(1, *in_.shape)
+	net.blobs["data"].data[...] = in_
+	# run net and take argmax for prediction
+	net.forward()
+	out = net.blobs["score"].data[0].argmax(axis=0)
+	plt.figure(3)
+	plt.imshow(net.blobs["data"].data[0,:,:,:].transpose(1,2,0))
+	#plt.savefig('3.png')
+	plt.figure(4)
+	plt.imshow(out,vmin=0, vmax=3)
+	#plt.savefig('4.png')	
+	#plt.colorbar()
+	plt.figure(5)
+	plt.imshow(net.blobs["score"].data[0][0,:,:])
+	#plt.savefig('5.png')
+	#plt.colorbar()
+	plt.figure(6)
+	plt.imshow(net.blobs["score"].data[0][1,:,:])
+	#plt.savefig('6.png')
+	#plt.colorbar()
+
+	return out
+
+def evaluate_result(prediction,groundTruth):
+	TP=np.sum(prediction[groundTruth==1]==1)
+	FN=np.sum(prediction[groundTruth==1]==0)
+	FP=np.sum(prediction[groundTruth==0]==1)
+	return TP,FN,FP
+
+def calc_prec_recall(TP,FN,FP):
+	precision=float(TP/(TP+FP+1e-20))
+	recall=float(TP/(TP+FN+1e-20))
+	return precision,recall
+
+def calc_detection_rate(prediction,label):
+	label_temp=np.copy(label)	
+	TP=FN=FP=0.0
+	s = [[1,1,1],
+        [1,1,1],
+        [1,1,1]]
+	labeled_prediction, num_features_prediction = ndimage.label(prediction, structure=s)
+	labeled_label, num_features_label = ndimage.label(label_temp, structure=s)
+	for i in range(0,num_features_prediction):
+		interception=np.sum(labeled_prediction[label==1]==i) #labels interception
+		if interception>0:
+			TP+=1
+		else:
+			FP+=1
+	for i in range(0,num_features_label):
+		interception=np.sum(labeled_label[prediction==1]==i)
+		if interception==0:
+			FN=+1
+	return TP,FN,FP
+
+def evaluate_test_data(net_def_prototxt,trained_net_caffemodel,datasetPath,datasetFileImages,datasetFileLabels):
+	images=read_val_file(datasetFileImages,datasetPath)
+	labels=read_val_file(datasetFileLabels,datasetPath)
+	TP=FN=FP=TP1=FN1=FP1=0.0
+	net = caffe.Net(net_def_prototxt, trained_net_caffemodel, caffe.TEST)
+	s=np.ones((10,10),np.float32)
+	for i in xrange(0,len(images)):
+		in_,label=open_images(images[i],labels[i])
+		prediction=infer_one_image(net,in_)
+		temp1,temp12,temp13=evaluate_result(prediction,label)
+		#prediction=ndimage.morphology.binary_opening(prediction, s)
+		temp,temp2,temp3=calc_detection_rate(prediction,label)		
+		TP1+=temp1
+		FN1+=temp12
+		FP1+=temp13		
+		TP+=temp
+		FN+=temp2
+		FP+=temp3
+		precision1,recall1=calc_prec_recall(TP1,FN1,FP1)
+		precision,recall=calc_prec_recall(TP,FN,FP)
+		sys.stdout.write("\n "+images[i]+"\n TESTING mean pixel prec/recall \n "+str(precision1)+"\n"+str(recall1) +" \n")  # same as print
+		sys.stdout.write("\n detection prec/recall \n "+str(precision)+"\n"+str(recall) +" \n")  # same as print
+ 		sys.stdout.flush()
+		plt.figure(1)
+		plt.imshow(prediction)
+		plt.savefig('1.png')
+		plt.figure(2)
+		plt.imshow(label)
+		plt.savefig('2.png')		
+		#plt.draw()		
+		#plt.show()
+
+
+	sys.stdout.write("\n \n TESTING prec/recall \n "+str(precision)+"\n"+str(recall) +" \n")  # same as print
+ 	sys.stdout.flush()
+
+	return precision,recall
+
+
+if __name__ == "__main__":
+	caffe.set_mode_gpu()
+	evaluate_test_data('deploy.prototxt', 'snapshot/train_iter_50000.caffemodel',"/home/pbrandao/caffe_workspace/datasets","/home/pbrandao/caffe_workspace/datasets/mainDB_val_2.txt","/home/pbrandao/caffe_workspace/datasets/mainDB_val_label_2.txt")

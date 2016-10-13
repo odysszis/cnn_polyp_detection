@@ -1,0 +1,184 @@
+import caffe
+
+import numpy as np
+from PIL import Image
+import scipy.io
+from skimage import io
+import random
+
+class NYUDSegDataLayer(caffe.Layer):
+    """
+    Data Python Class to load input image, depth map and ground truth binary masks
+    from the polyp datasets and pre-process the data:
+    - cast to float
+    - image resizing
+    - mean subtraction
+    - RGB -> BGR
+    """
+    def setup(self, bottom, top):
+        """
+        Setup data layer initialising parameters:
+        - data_dir: path to dataset
+        - split: file containing a list of the RGB image filenames
+	- split_label: file containing a list of the binary mask filenames
+	- split_depth: file containing a list of the depth map image names
+	- tops: tuple with top blobs
+        - randomize: load in random order (default: True)
+        - seed: seed for randomization (default: None)
+	- width: default input image width
+	- height: default input image height
+	- mean_bgr: tuple of RGB mean values to subtract
+	- mean_depth: depth mean value to subtract
+        """
+        # initialize
+        params = eval(self.param_str)
+        self.data_dir = params['data_dir']
+        self.split = params['split']
+        self.split_label = params['split_label']
+        self.split_depth = params['split_depth']
+        self.tops = params['tops']
+        self.random = params.get('randomize', True)
+        self.seed = params.get('seed', None)
+        self.width = params.get('width', 500)
+        self.height = params.get('height', 500)
+
+        # mean initialization
+        self.mean_bgr = np.array(params['mean'])
+        self.mean_depth = np.array(params['mean_depth'])
+
+        # store top data for reshape + forward
+        self.data = {}
+
+        # tops: check configuration
+        if len(top) != len(self.tops):
+            raise Exception("Need to define {} tops for all outputs.")
+        # data layers have no bottoms
+        if len(bottom) != 0:
+            raise Exception("Do not define a bottom.")
+
+        # load indices for image, binary mask and depth data
+        self.split_f  = '{}/{}.txt'.format(self.data_dir, self.split)
+        self.split_f_label  = '{}/{}.txt'.format(self.data_dir, self.split_label)
+        self.split_f_depth  = '{}/{}.txt'.format(self.data_dir, self.split_depth)
+        self.indices = open(self.split_f, 'r').read().splitlines()
+        self.indices_label = open(self.split_f_label, 'r').read().splitlines()
+        self.indices_depth = open(self.split_f_depth, 'r').read().splitlines()
+	# Initial data index
+        self.idx = 0
+
+        # if the data belong to the training set, parse them randomly
+        if 'train' not in self.split:
+            self.random = False
+
+        # initialize the data index randomly in case of train, or
+        # to zero in case of testing
+        if self.random:
+            random.seed(self.seed)
+            self.idx = random.randint(0, len(self.indices)-1)
+
+    def reshape(self, bottom, top):
+	'''
+	Load input image and binary masks and reshape blobs.
+	'''
+        # load data for tops and reshape tops
+        image = self.load_image(self.idx)
+        depth = self.load_depth(self.idx)
+        label = self.load_label(self.idx)
+	# Flip image, mask and depth map both on the vertical and horizontal axis
+        # to augment the dataset, if in training
+ 	if 'train' in self.split:
+		if random.random() > 0.5:
+		    image = image[:,::-1,:]
+		    depth = depth[:,::-1,:]
+		    label = label[:,::-1,:]
+		if random.random() > 0.5:
+		    image = image[:,:,::-1]
+		    depth = depth[:,:,::-1]
+		    label = label[:,:,::-1]
+
+	# store image, depth and mask and reshape top blobs
+	# according to the input data size
+        self.data['color'] = image
+        self.data['depth'] = depth
+        self.data['label'] = label
+        for i, t in enumerate(self.tops):
+            top[i].reshape(1, *self.data[t].shape)
+
+
+    def forward(self, bottom, top):
+        # assign the output of the Python Layer as the input of the
+        # next layers
+        for i, t in enumerate(self.tops):
+            top[i].data[...] = self.data[t]
+
+        # pick next input randomly if in train, or sequentially if in testing
+        if self.random:
+            self.idx = random.randint(0, len(self.indices)-1)
+        else:
+            self.idx += 1
+            if self.idx == len(self.indices):
+                self.idx = 0
+
+    def backward(self, top, propagate_down, bottom):
+	# the data layer doesn't participate in backprop, so we just pass
+        pass
+
+
+    def load_image(self, idx):
+        """
+        Load input image and preprocess:
+	- resize
+        - cast to float
+        - switch channels RGB -> BGR
+        - subtract mean
+        - transpose to channel x height x width order
+        """
+        idx = self.indices[idx]
+	idx = idx.split()[0]
+	im = io.imread('{}/{}'.format(self.data_dir, idx))
+        im = Image.fromarray(im)
+        im = im.resize((self.width, self.height), Image.ANTIALIAS)   # resize image
+        im = np.array(im, dtype=np.float32)			     # cast to float
+        im = im[:,:,::-1]                                            # RGB -> BGR
+        im -= self.mean_bgr					     # mean subtraction
+        im = im.transpose((2,0,1))
+        return im
+
+    def load_label(self, idx):
+        """
+        Load binary mask and preprocess:
+	- resize
+	- convert to greyscale
+	- cast to integer
+	- binarize
+        """
+        idx = self.indices_label[idx]
+        idx=idx.split()[0]
+        im = io.imread('{}/{}'.format(self.data_dir, idx))
+        im = Image.fromarray(im)
+        im=im.resize((self.width, self.height), Image.NEAREST)	    # resize
+        im=im.convert('L')					    # convert to greyscale
+        im=np.array(im, dtype=(np.int32))			    # cast to integer
+        label=im
+        label[label>0]=1					    # convert to binary
+        label=np.array(label,np.uint8)
+        label = label[np.newaxis, ...]
+        return label
+
+    def load_depth(self, idx):
+        """
+        Load depth map and preprocess:
+	- resize
+	- cast to float
+	- subtract mean
+        """
+        idx = self.indices_depth[idx]
+        idx=idx.split()[0]
+        im = io.imread('{}/depth/{}'.format(self.data_dir, idx))
+        im = Image.fromarray(im)
+        im = im.resize((self.width, self.height), Image.ANTIALIAS)  # resize
+        im = np.array(im, dtype=np.float32)
+        d = im
+        d -= self.mean_depth
+        d = d[np.newaxis, ...]
+        return d

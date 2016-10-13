@@ -1,0 +1,92 @@
+from __future__ import division
+import matplotlib
+matplotlib.use('Agg')
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
+import caffe
+from skimage import io	
+from scipy import ndimage
+
+def calc_detection_rate(prediction,label):
+	'''
+	Calculate the detection True Positives, False Negatives and False Positives.
+	TP occurs whenever the prediction region intersects the ground truth region.
+	FP occurs 
+	'''
+	label_temp=np.copy(label)	
+	TP=FN=FP=0.0
+	# pattern for ndimage neighbouring pixels
+	s = [[1,1,1],
+        [1,1,1],
+        [1,1,1]]
+	labeled_prediction, num_features_prediction = ndimage.label(prediction, structure=s)
+	labeled_label, num_features_label = ndimage.label(label_temp, structure=s)
+	for i in range(1,num_features_prediction+1):
+		intersection=np.sum(labeled_prediction[label==1]==i)
+		if intersection>0:
+			TP+=1
+		else:
+			FP+=1
+	for i in range(1,num_features_label+1):
+		intersection=np.sum(labeled_label[prediction==1]==i)
+		if intersection==0:
+			FN=+1
+	return TP,FN,FP
+
+
+caffe.set_mode_gpu()
+caffe.set_device(0);
+
+# load net
+snapshot_path = 'snapshot/train_iter_120000.caffemodel'
+net = caffe.Net('deploy.prototxt', snapshot_path, caffe.TEST)
+
+# Initialize data index
+maxIdx = len(net.layers[0].indices)
+
+# Lists to hold segmentation precision and recall, detection precisio and recall
+# and intersection over union values
+prec = []
+rec = []
+precd = []
+recd = []
+iu=[]
+
+# Iterate over the images. Feed each image to the CNN and calculate metrics comparing
+# to the ground truth binary masks
+for idx in range(0,maxIdx):
+    if np.mod(idx, 10) == 0:
+        print 'Frame: %d\n' % net.layers[0].idx
+    
+    # Feed image and forward
+    net.forward()
+    # extract binary mask and prediction
+    gt = net.blobs['label'].data[0,0]
+    out = net.blobs["score"].data[0].argmax(axis=0)
+    # calculate detecion TP, FN, FP
+    tpd,fnd,fpd=calc_detection_rate(out,gt)
+    # Calculate segmentation TP, FP, FN
+    tp = np.sum(out[gt == 1] == 1)			# polyps: 1, non-polyps: 0
+    fp = np.sum(out[gt == 0] == 1)
+    fn = np.sum(out[gt == 1] == 0)
+    # Calculate Segmentation precision and recall and append to the list
+    prec.append(tp/(tp+fp+1e-20))
+    rec.append(tp/(tp+fn+1e-20))
+    # Calculate Detection precision and recall and append to the list
+    precd.append(tpd/(tpd+fpd+1e-20))
+    recd.append(tpd/(tpd+fnd+1e-20))
+    # Calculate Intersection over Union and append
+    iu.append(tp/(tp+fp+fn))
+
+
+# Print results
+
+print 'Average precision: %g' % np.mean(prec)
+print 'Average recall: %g' % np.mean(rec)
+
+print 'Average detection precision: %g' % np.mean(precd)
+print 'Average detection recall: %g' % np.mean(recd)
+
+print 'Average IU: %g' % np.mean(iu)
+
