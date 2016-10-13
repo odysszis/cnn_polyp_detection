@@ -29,12 +29,6 @@ Each CNN was trained on both RGB and RGBD (RGB+depth map) data. To extract the d
 
 Each RGBD model also includes a **nyud_layers.py** file that is an RGBD Python layer file and is used instead of **layers.py**.
 
-## Training
-To train a particular model, run the **solver.py** code in the relevant folder. Training invokes the **solver.prototxt** which initializes the model according to the **train.prototxt** file and applies backpropagation using the optimization method described in the solver file. The network weights are initialized by pre-trained weights. AlexNet and VGG are initialized by the `.caffemodel` files publicly available at [shelhamer/fcn.berkeleyvision.org](https://github.com/shelhamer/fcn.berkeleyvision.org) and the GoogLeNet is initialized by the `.caffemodel` file publicly available at [Model Zoo](https://github.com/BVLC/caffe/wiki/Model-Zoo). These weight files are not uploaded into this repository. In order to train, please download the `.caffemodel` files and store them in the relevant **RGBD** model folders. The fine-tuned weights are stored in the `snapshot` folder.
-
-## Testing
-To test a particular model, run the **infer.py** code in the relevant folder. Testing initializes the architecture described in the **deploy.prototxt** file using the fine-tuned weights in the `snapshot` folder. Testing involves feeding all data in the test set and calculating the mean segmentation and detection precision and recall and the mean intersection over union.
-
 ## Datasets
 Two databases were used as training set:
 * [CVC-ClinicDB](http://www.medicalimagingandgraphics.com/article/S0895-6111(15)00056-7/abstract): publicly available [here](http://polyp.grand-challenge.org/site/Polyp/CVCClinicDB/)
@@ -45,3 +39,11 @@ and two databases were used as testing set:
 * [CVC-ColonDB](http://www.sciencedirect.com/science/article/pii/S0031320312001185): publicly available [here](http://mv.cvc.uab.es/projects/colon-qa/cvccolondb)
 
 These datasets should be placed in the relevant `datasets` folder. After extracting the depth map from both the training and the test data, using the Shape-from-Shading technique, the depth maps should be placed inside the `datasets/depth` folder.
+
+## Training
+To train a particular model, run the **solver.py** code in the relevant folder. Training invokes the **solver.prototxt** which initializes the model according to the **train.prototxt** file and applies backpropagation using the optimization method described in the solver file. The network weights are initialized by pre-trained weights. AlexNet and VGG are initialized by the `.caffemodel` files publicly available at [shelhamer/fcn.berkeleyvision.org](https://github.com/shelhamer/fcn.berkeleyvision.org) and the GoogLeNet is initialized by the `.caffemodel` file publicly available at [Model Zoo](https://github.com/BVLC/caffe/wiki/Model-Zoo). These weight files are not uploaded into this repository. In order to train, please download the `.caffemodel` files and store them in the relevant **RGBD** model folders. The fine-tuned weights are stored in the `snapshot` folder.
+
+## Testing
+To test a particular model, run the **infer.py** code in the relevant folder. Testing initializes the architecture described in the **deploy.prototxt** file using the fine-tuned weights in the `snapshot` folder. Testing involves feeding all data in the test set and calculating the mean segmentation and detection precision and recall and the mean intersection over union.
+
+
